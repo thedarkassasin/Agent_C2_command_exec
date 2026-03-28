@@ -83,6 +83,7 @@ if (Test-Path $filePath) {
             Write-Host "[-] Upload failed. Status: $($response.StatusCode) - $errBody"
         }
     } catch {
+        Write-Host "[DEBUG] Entering file upload section"
         Write-Host "[-] Exception during upload: $($_.Exception.Message)"
     } finally {
         if ($fileStream) { $fileStream.Dispose() }
@@ -90,5 +91,6 @@ if (Test-Path $filePath) {
         if ($multipart) { $multipart.Dispose() }
     }
 } else {
+    Write-Host "[DEBUG] Entering file upload section"
     Write-Host "[!] File not found at $filePath"
 }
